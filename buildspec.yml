@@ -1,0 +1,47 @@
+version: 0.2
+
+env:
+  variables:
+    TZ: "Asia/Seoul"
+    AWS_DEFAULT_REGION: "ap-northeast-2"
+    AWS_ACCOUNT_ID: 950274644703
+    ECR_REPO_NAME: "green"
+    GITHUB_REPO_URL: "https://github.com/uijin-cloud/gj2025-repository.git"
+    GITHUB_USER: "uijin-cloud"
+  parameter-store:
+    GITHUB_TOKEN: "/gj2025/github/token"
+
+phases:
+  pre_build:
+    commands:
+      - curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+      - sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+      - rm argocd-linux-amd64
+      - echo Setting timezone and environment...
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - echo Cloning GitHub repository...
+      - git config --global user.name "CodeBuild Bot"
+      - git config --global user.email "mailto:codebuild@bot.com"
+      - git clone -b gitops-green https://oauth2:$GITHUB_TOKEN@github.com/$GITHUB_USER/gj2025-repository.git
+
+  build:
+    commands:
+      - echo Building the Docker image...
+      - IMAGE_TAG=$(TZ=$TZ date +"%Y-%m-%d.%H.%M.%S")
+      - docker build -t $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO_NAME:$IMAGE_TAG .
+
+  post_build:
+    commands:
+      - echo Pushing Docker image to Amazon ECR...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO_NAME:$IMAGE_TAG
+      - echo Replacing image tag in green-rollout.yaml...
+      - cd gj2025-repository
+      - 'sed -i "s|image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/green:.*|image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/green:${IMAGE_TAG}|" green-rollout.yaml'
+      - echo Committing and pushing updated green-rollout.yaml...
+      - git add green-rollout.yaml
+      - git commit -m "Update green rollout image tag to ${IMAGE_TAG}"
+      - git push https://oauth2:$GITHUB_TOKEN@github.com/$GITHUB_USER/gj2025-repository.git HEAD:gitops-green
+      - ARGOCD_EXTERNAL_URL=$(aws elbv2 describe-load-balancers --names gj2025-argo-external-nlb --region ap-northeast-2 --query 'LoadBalancers[0].DNSName' --output text)
+      - echo y | argocd login $ARGOCD_EXTERNAL_URL:80 --username admin --password Skills53
+      - argocd app sync green-app
