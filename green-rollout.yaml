@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: green-rollout
+  namespace: skills
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: green
+  template:
+    metadata:
+      labels:
+        app: green
+    spec:
+      containers:
+        - name: green-app
+          image: 950274644703.dkr.ecr.ap-northeast-2.amazonaws.com/green:v1.0.0
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: DB_USER
+            - name: DB_PASSWD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: DB_PASSWD
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: DB_URL
+  strategy:
+    blueGreen:
+      activeService: green-service-active
+      previewService: green-service-preview
+      autoPromotionEnabled: true
